@@ -7,15 +7,16 @@ set -euo pipefail
 mkdir -p data && cd data
 
 if [ ! -d FETAL_PLANES_ZENODO ]; then
-  wget -q --show-progress -O planes.zip "https://zenodo.org/records/3904280/files/FETAL_PLANES_ZENODO.zip?download=1"
-  unzip -q planes.zip && rm planes.zip
+  wget -q --show-progress -O planes.zip "https://zenodo.org/api/records/3904280/files/FETAL_PLANES_ZENODO.zip/content"
+  # the zip has no top-level folder, so extract into one
+  mkdir -p FETAL_PLANES_ZENODO && unzip -q planes.zip -d FETAL_PLANES_ZENODO && rm planes.zip
 fi
 
 if [ ! -d HC18/training_set ]; then
   mkdir -p HC18 && cd HC18
-  wget -q --show-progress -O training_set.zip "https://zenodo.org/records/1327317/files/training_set.zip?download=1"
+  wget -q --show-progress -O training_set.zip "https://zenodo.org/api/records/1327317/files/training_set.zip/content"
   wget -q --show-progress -O training_set_pixel_size_and_HC.csv \
-    "https://zenodo.org/records/1327317/files/training_set_pixel_size_and_HC.csv?download=1"
+    "https://zenodo.org/api/records/1327317/files/training_set_pixel_size_and_HC.csv/content"
   unzip -q training_set.zip && rm training_set.zip
   cd ..
 fi

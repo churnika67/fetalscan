@@ -75,7 +75,18 @@ def run(args) -> dict:
 
     os.makedirs(args.out, exist_ok=True)
     best, best_path, bad = -1.0, os.path.join(args.out, "best.pt"), 0
-    for epoch in range(1, args.epochs + 1):
+    last_path, start = os.path.join(args.out, "last.pt"), 1
+    if args.init:
+        model.load_state_dict(torch.load(args.init, map_location=device)["model"])
+        print(f"initialized weights from {args.init}")
+    if args.resume and os.path.exists(last_path):
+        st = torch.load(last_path, map_location=device)
+        model.load_state_dict(st["model"])
+        opt.load_state_dict(st["opt"])
+        sched.load_state_dict(st["sched"])
+        best, bad, start = st["best"], st["bad"], st["epoch"] + 1
+        print(f"resumed from epoch {st['epoch']} (best={best:.4f})")
+    for epoch in range(start, args.epochs + 1):
         model.train()
         t0, total = time.time(), 0.0
         for x, y, _, _ in dl_tr:
@@ -99,9 +110,11 @@ def run(args) -> dict:
             torch.save({"model": model.state_dict(), "size": args.size, "base": args.base}, best_path)
         else:
             bad += 1
-            if bad >= args.patience:
-                print("early stopping")
-                break
+        torch.save({"model": model.state_dict(), "opt": opt.state_dict(), "sched": sched.state_dict(),
+                    "epoch": epoch, "best": best, "bad": bad}, last_path)
+        if bad >= args.patience:
+            print("early stopping")
+            break
 
     ckpt = torch.load(best_path, map_location=device)
     model.load_state_dict(ckpt["model"])
@@ -131,6 +144,8 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--device", default="auto")
     p.add_argument("--limit", type=int, default=0)
     p.add_argument("--mlflow", action="store_true")
+    p.add_argument("--resume", action="store_true", help="continue from <out>/last.pt if it exists")
+    p.add_argument("--init", default="", help="start from these model weights (e.g. a previous best.pt)")
     return p
 
 

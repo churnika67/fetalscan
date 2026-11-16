@@ -1,0 +1,114 @@
+{
+ "classification": {
+  "best_val_macro_f1": 0.9625237585762553,
+  "test": {
+   "accuracy": 0.9309428950863213,
+   "macro_f1": 0.9234922949000426,
+   "per_class_f1": [
+    0.8703241895261845,
+    0.9905341446923597,
+    0.8680555555555556,
+    0.9315274642588411,
+    0.9961270333075134,
+    0.8843853820598006
+   ],
+   "confusion_matrix": [
+    [
+     349,
+     0,
+     0,
+     2,
+     0,
+     7
+    ],
+    [
+     5,
+     1465,
+     0,
+     0,
+     0,
+     2
+    ],
+    [
+     1,
+     0,
+     500,
+     0,
+     0,
+     23
+    ],
+    [
+     7,
+     0,
+     0,
+     619,
+     0,
+     34
+    ],
+    [
+     1,
+     0,
+     0,
+     0,
+     643,
+     1
+    ],
+    [
+     81,
+     21,
+     128,
+     48,
+     3,
+     1331
+    ]
+   ]
+  },
+  "classes": [
+   "Fetal abdomen",
+   "Fetal brain",
+   "Fetal femur",
+   "Fetal thorax",
+   "Maternal cervix",
+   "Other"
+  ],
+  "n_test": 5271
+ },
+ "segmentation": {
+  "best_val_dice": 0.9623630595668244,
+  "test": {
+   "dice_mean": 0.96071654068699,
+   "dice_ci95": [
+    0.9445328830283362,
+    0.9707438781254368
+   ],
+   "hc_mae_mm": 2.5897446032056632,
+   "hc_mae_ci95": [
+    2.177990671581535,
+    3.049784005875762
+   ],
+   "hc_within_3mm": 0.7284768211920529,
+   "ellipse_fit_failures": 0,
+   "n": 151
+  }
+ },
+ "latency_onnxruntime_cpu": {
+  "classifier": {
+   "p50_ms": 3.3578949999082397,
+   "p95_ms": 4.4144693498765255,
+   "fps_p50": 297.80561930236854,
+   "providers": [
+    "AzureExecutionProvider",
+    "CPUExecutionProvider"
+   ]
+  },
+  "segmenter": {
+   "p50_ms": 47.697784999854775,
+   "p95_ms": 60.46816074972412,
+   "fps_p50": 20.965334134552467,
+   "providers": [
+    "AzureExecutionProvider",
+    "CPUExecutionProvider"
+   ]
+  }
+ }
+}

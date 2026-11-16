@@ -11,15 +11,43 @@ Deep learning for fetal ultrasound: **standard-plane classification** and **auto
 
 ## Results
 
-_Fill in after running `colab_fetalscan.ipynb` on a GPU. Do not report numbers from the synthetic smoke-test data._
+Trained on CPU (4-core Xeon, no GPU). Test sets were never used for training, model selection or early stopping. Full numbers are in [`docs/results.json`](docs/results.json).
+
+**Plane classification**: FETAL_PLANES_DB official test split, 5,271 images; ResNet-18, 160 px, 10 epochs
 
 | Metric | Value |
 |---|---|
-| Plane classification, test accuracy | TBD |
-| Plane classification, test macro F1 | TBD |
-| Head segmentation, test Dice | TBD |
-| Head circumference, test MAE (mm) [95% CI] | TBD |
-| ONNX Runtime latency p50, classifier / segmenter (ms) | TBD |
+| Test accuracy | **93.1%** |
+| Test macro F1 | **0.924** |
+| Per-class F1 | brain 0.991, cervix 0.996, thorax 0.932, other 0.884, abdomen 0.870, femur 0.868 |
+
+Most errors come from the catch-all *Other* class (e.g. 128 *Other* frames predicted as femur); the five anatomical planes are rarely confused with each other.
+
+![confusion matrix](docs/confusion_matrix.png)
+
+**Head segmentation + head circumference**: HC18 held-out split, 151 images; U-Net at 256 px
+
+| Metric | Value |
+|---|---|
+| Test Dice | **0.961** (95% CI 0.945 to 0.971) |
+| HC mean absolute error | **2.59 mm** (95% CI 2.18 to 3.05 mm) |
+| Within 3 mm of the reference HC | 72.9% |
+| Ellipse-fit failures | 0 / 151 |
+
+The U-Net was trained for 11 epochs, then resumed from the best checkpoint at a lower learning rate (5e-4) for 7 more epochs with early stopping, after a machine restart. HC18's official test labels are hidden behind the Grand Challenge leaderboard, so these numbers come from a 70/15/15 split of the labeled training set.
+
+![segmentation examples](docs/segmentation_examples.png)
+
+**Interpretability (Grad-CAM)**: labels are the model's predictions. The second panel is an *Other* frame the model calls femur, a typical failure.
+
+![grad-cam](docs/gradcam.png)
+
+**Real-time inference** (ONNX Runtime, CPU, batch 1)
+
+| Model | p50 latency | p95 latency | Throughput |
+|---|---|---|---|
+| Plane classifier (160 px) | 3.4 ms | 4.4 ms | about 300 frames/s |
+| Head segmenter (256 px) | 47.7 ms | 60.5 ms | about 21 frames/s |
 
 ## How it works
 
@@ -49,6 +77,7 @@ Design choices worth knowing:
 ```bash
 pip install -r requirements.txt
 bash scripts/download_data.sh                      # FETAL_PLANES_DB + HC18 from Zenodo
+python scripts/resize_dataset.py --src data/FETAL_PLANES_ZENODO --dst data/FETAL_PLANES_256   # optional, much faster loading
 python -m fetalscan.train_cls --data data/FETAL_PLANES_ZENODO --out runs/cls
 python -m fetalscan.train_seg --data data/HC18 --out runs/seg
 python -m fetalscan.tune --data data/FETAL_PLANES_ZENODO --trials 10      # optional Optuna search
@@ -60,7 +89,7 @@ FETALSCAN_CLS=exports/classifier.onnx FETALSCAN_SEG=exports/segmenter.onnx uvico
 curl -F file=@frame.png "localhost:8000/measure-head?pixel_size_mm=0.15"
 streamlit run app/streamlit_app.py -- --cls exports/classifier.onnx --seg exports/segmenter.onnx
 ```
-Add `--mlflow` to either training command to log runs with MLflow.
+Add `--mlflow` to either training command to log runs with MLflow, and `--resume` to continue from the last saved epoch after an interruption.
 
 **Tests (CPU, no downloads):**
 ```bash
