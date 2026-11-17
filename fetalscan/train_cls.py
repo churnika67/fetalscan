@@ -47,7 +47,7 @@ def run(args) -> dict:
     print(f"train={len(tr)} val={len(va)} test={len(te)} device={device}")
 
     mk = lambda d, train: DataLoader(  # noqa: E731
-        PlanesDataset(d, args.size, train=train, seed=args.seed),
+        PlanesDataset(d, args.size, train=train, clahe=not args.no_clahe, seed=args.seed),
         batch_size=args.batch_size, shuffle=train, num_workers=args.workers, pin_memory=device.type == "cuda",
     )
     dl_tr, dl_va, dl_te = mk(tr, True), mk(va, False), mk(te, False)
@@ -94,7 +94,8 @@ def run(args) -> dict:
         tracker.log({"train_loss": train_loss, "val_acc": rep["accuracy"], "val_macro_f1": rep["macro_f1"]}, epoch)
         if rep["macro_f1"] > best:
             best, bad = rep["macro_f1"], 0
-            torch.save({"model": model.state_dict(), "classes": PLANE_CLASSES, "size": args.size}, best_path)
+            torch.save({"model": model.state_dict(), "classes": PLANE_CLASSES, "size": args.size,
+                        "clahe": not args.no_clahe}, best_path)
         else:
             bad += 1
         torch.save({"model": model.state_dict(), "opt": opt.state_dict(), "sched": sched.state_dict(),
@@ -152,6 +153,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--device", default="auto")
     p.add_argument("--limit", type=int, default=0, help="max images per class (quick experiments)")
     p.add_argument("--no-pretrained", action="store_true")
+    p.add_argument("--no-clahe", action="store_true", help="ablation: skip CLAHE contrast enhancement")
     p.add_argument("--mlflow", action="store_true")
     p.add_argument("--resume", action="store_true", help="continue from <out>/last.pt if it exists")
     p.add_argument("--init", default="", help="start from these model weights (e.g. a previous best.pt)")

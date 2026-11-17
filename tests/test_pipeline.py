@@ -74,3 +74,56 @@ def test_train_export_and_serve(synth, tmp_path):
     assert r.status_code == 200 and "head_found" in r.json()
     r = client.post("/classify", files={"file": ("x.png", b"not an image", "image/png")})
     assert r.status_code == 400
+
+
+def test_landmarks_follow_ellipse():
+    import cv2
+
+    from fetalscan.landmarks import decode_heatmaps, ellipse_landmarks, gaussian_heatmaps
+
+    mask = np.zeros((128, 128), np.uint8)
+    cv2.ellipse(mask, (64, 60), (40, 25), 0, 0, 360, 1, -1)
+    pts = ellipse_landmarks(mask)
+    # BPD = minor axis (vertical here), OFD = major axis (horizontal)
+    assert np.linalg.norm(pts[0] - pts[1]) == pytest.approx(50, abs=2)
+    assert np.linalg.norm(pts[2] - pts[3]) == pytest.approx(80, abs=2)
+    assert pts[2][0] < pts[3][0]  # canonical left-to-right order
+    back = decode_heatmaps(gaussian_heatmaps(pts, 128, 3.0))
+    assert np.abs(back - pts).max() < 0.6
+
+
+def test_landmark_training_smoke(synth, tmp_path):
+    from fetalscan import train_landmarks
+
+    a = train_landmarks.parser().parse_args(["--data", str(synth / "hc18"), "--epochs", "1", "--size", "64",
+                                             "--base", "8", "--workers", "0", "--out", str(tmp_path / "lm")])
+    r = train_landmarks.run(a)["test"]
+    assert r["mean_radial_error_mm"] >= 0 and r["n"] > 0
+
+
+def test_hc18_submission(synth, tmp_path):
+    import shutil
+
+    from fetalscan import train_seg
+    from fetalscan import hc18_submit
+
+    d = synth / "hc18"
+    b = train_seg.parser().parse_args(["--data", str(d), "--epochs", "1", "--size", "64", "--base", "8",
+                                       "--workers", "0", "--out", str(tmp_path / "seg")])
+    train_seg.run(b)
+    test_dir = tmp_path / "hc" / "test_set"
+    test_dir.mkdir(parents=True)
+    for f in list((d / "training_set").glob("*_HC.png"))[:3]:
+        shutil.copy(f, test_dir / f.name)
+    (tmp_path / "hc" / "test_set_pixel_size.csv").write_text(
+        "filename,pixel size(mm)\n" + "".join(f"{f.name},0.2\n" for f in test_dir.iterdir()))
+    out = tmp_path / "sub.csv"
+    import sys
+
+    sys.argv = ["x", "--data", str(tmp_path / "hc"), "--ckpt", str(tmp_path / "seg" / "best.pt"), "--tta", "--out", str(out)]
+    hc18_submit.main()
+    import pandas as pd
+
+    df = pd.read_csv(out)
+    assert list(df.columns) == ["filename", "center_x_mm", "center_y_mm", "semi_axes_a_mm", "semi_axes_b_mm", "angle_rad"]
+    assert len(df) == 3

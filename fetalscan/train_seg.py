@@ -22,12 +22,23 @@ from .utils import MaybeMLflow, pick_device, save_json, seed_everything
 
 
 @torch.no_grad()
-def evaluate(model, ds: HC18Dataset, device, threshold: float = 0.5, vis_dir: str | None = None, n_vis: int = 8):
+def predict_prob(model, x: torch.Tensor, device, tta: bool = False) -> np.ndarray:
+    """Foreground probability for one 1xHxW image; with tta, average with the horizontally flipped pass."""
+    xb = x[None].to(device)
+    prob = torch.sigmoid(model(xb))
+    if tta:
+        prob = (prob + torch.sigmoid(model(xb.flip(-1))).flip(-1)) / 2
+    return prob[0, 0].cpu().numpy()
+
+
+@torch.no_grad()
+def evaluate(model, ds: HC18Dataset, device, threshold: float = 0.5, vis_dir: str | None = None, n_vis: int = 8,
+             tta: bool = False):
     model.eval()
     dices, errs, fails = [], [], 0
     for i in range(len(ds)):
         x, y, pix_mm, hc_ref = ds[i]
-        prob = torch.sigmoid(model(x[None].to(device)))[0, 0].cpu().numpy()
+        prob = predict_prob(model, x, device, tta)
         pred = (prob > threshold).astype(np.uint8)
         dices.append(dice(pred, y[0].numpy()))
         hc = head_circumference_mm(pred, pix_mm)
@@ -118,7 +129,7 @@ def run(args) -> dict:
 
     ckpt = torch.load(best_path, map_location=device)
     model.load_state_dict(ckpt["model"])
-    test = evaluate(model, ds_te, device, vis_dir=os.path.join(args.out, "examples"))
+    test = evaluate(model, ds_te, device, vis_dir=os.path.join(args.out, "examples"), tta=args.tta)
     result = {"best_val_dice": best, "test": test}
     save_json(result, os.path.join(args.out, "metrics.json"))
     tracker.log({"test_dice": test["dice_mean"], "test_hc_mae_mm": test["hc_mae_mm"]})
@@ -144,6 +155,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--device", default="auto")
     p.add_argument("--limit", type=int, default=0)
     p.add_argument("--mlflow", action="store_true")
+    p.add_argument("--tta", action="store_true", help="flip test-time augmentation for the final test evaluation")
     p.add_argument("--resume", action="store_true", help="continue from <out>/last.pt if it exists")
     p.add_argument("--init", default="", help="start from these model weights (e.g. a previous best.pt)")
     return p
