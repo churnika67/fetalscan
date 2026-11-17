@@ -1,5 +1,7 @@
 """Train the 4-point fetal head landmark detector (BPD and OFD endpoints) on HC18.
 
+Soft-argmax coordinate regression (spatial softmax over U-Net logits) with an axis-swap-invariant L1 loss.
+
     python -m fetalscan.train_landmarks --data data/HC18 --init-seg runs/seg/best.pt --out runs/landmarks
 """
 from __future__ import annotations
@@ -13,7 +15,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from .datasets import random_split, read_hc18_csv
-from .landmarks import LANDMARKS, HC18LandmarkDataset, decode_heatmaps, heatmap_loss
+from .landmarks import LANDMARKS, HC18LandmarkDataset, match_pairs, pair_invariant_l1, soft_argmax
 from .metrics import bootstrap_ci
 from .models import UNet
 from .utils import pick_device, save_json, seed_everything
@@ -25,9 +27,8 @@ def evaluate(model, ds, device) -> dict:
     radial, bpd_err, ofd_err = [], [], []
     for i in range(len(ds)):
         x, _, gt, pix = ds[i]
-        hm = model(x[None].to(device))[0].cpu().numpy()
-        pred = decode_heatmaps(hm)
         gt = gt.numpy()
+        pred = match_pairs(soft_argmax(model(x[None].to(device)))[0].cpu().numpy(), gt)
         radial.append(np.linalg.norm(pred - gt, axis=1) * pix)
         length = lambda p, a, b: np.linalg.norm(p[a] - p[b]) * pix  # noqa: E731
         bpd_err.append(abs(length(pred, 0, 1) - length(gt, 0, 1)))
@@ -72,10 +73,11 @@ def run(args) -> dict:
     for epoch in range(start, args.epochs + 1):
         model.train()
         t0, total = time.time(), 0.0
-        for x, hm, _, _ in dl:
-            x, hm = x.to(device), hm.to(device)
+        for x, _, pts, _ in dl:
+            x, pts = x.to(device), pts.to(device)
             opt.zero_grad(set_to_none=True)
-            loss = heatmap_loss(model(x), hm)
+            # coordinate loss in normalized units (fraction of image size)
+            loss = pair_invariant_l1(soft_argmax(model(x)), pts).mean() / args.size
             loss.backward()
             opt.step()
             total += loss.item() * len(x)

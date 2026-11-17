@@ -8,6 +8,7 @@ Deep learning for fetal ultrasound: **standard-plane classification** and **auto
 |---|---|---|---|
 | Plane classification (6 classes: abdomen, brain, femur, thorax, maternal cervix, other) | FETAL_PLANES_DB, about 12,400 images | ResNet-18 (ImageNet transfer, 1-channel input) | accuracy, macro F1, confusion matrix |
 | Fetal head segmentation + HC biometry | HC18, 999 labeled training images | U-Net + OpenCV ellipse fit | Dice, HC MAE (mm), % within 3 mm, bootstrap 95% CI |
+| Biometry landmark detection (BPD / OFD endpoints) | HC18 (points derived from ellipse labels) | U-Net + soft-argmax | mean radial error (mm), success rate, BPD/OFD length error |
 
 ## Results
 
@@ -41,6 +42,44 @@ The U-Net was trained for 11 epochs, then resumed from the best checkpoint at a 
 **Interpretability (Grad-CAM)**: labels are the model's predictions. The second panel is an *Other* frame the model calls femur, a typical failure.
 
 ![grad-cam](docs/gradcam.png)
+
+**Ablations (plane classifier, same 5,271-image test set, 10 epochs each)**
+
+| Variant | Test accuracy | Macro F1 |
+|---|---|---|
+| ImageNet-pretrained + CLAHE (baseline) | 93.1% | 0.924 |
+| From scratch + CLAHE | 89.5% | 0.888 |
+| ImageNet-pretrained, no CLAHE | **93.4%** | **0.930** |
+
+Transfer learning matters (+3.6 accuracy points, +0.036 macro F1) even though ultrasound looks nothing like ImageNet. CLAHE contrast enhancement did *not* help the classifier: a small negative result that suggests the network already normalizes contrast, and that preprocessing borrowed from classical image analysis should be tested, not assumed.
+
+**Segmentation: resolution and test-time augmentation (151 held-out HC18 images)**
+
+| Model | HC MAE (mm) [95% CI] | Dice |
+|---|---|---|
+| U-Net 256 px | 2.59 [2.18, 3.05] | 0.961 |
+| U-Net 256 px + flip TTA (**selected**) | **2.49** [2.11, 2.93] | **0.962** |
+| U-Net 384 px (fine-tuned from 256) | 2.47 [2.09, 2.88] | 0.961 |
+| U-Net 384 px + flip TTA | 2.51 [2.15, 2.92] | 0.961 |
+
+The 256 px + TTA model was chosen on the validation split (val HC MAE 2.27 mm vs. 3.04 mm at 384 px); on test the four variants are within each other's confidence intervals. With 8 CPU epochs, higher resolution did not pay off; a GPU run training at 384+ from scratch is the obvious next experiment.
+
+**Biometry landmark detection (BPD and OFD endpoints)**
+
+HC18 provides ellipse outlines, not point labels, so the 4 landmarks are the endpoints of each annotated ellipse's minor axis (biparietal, BPD) and major axis (occipitofrontal, OFD), recomputed after every augmentation. A U-Net (encoder warm-started from the segmentation model) outputs one map per landmark; soft-argmax turns each map into sub-pixel coordinates, trained with an L1 loss that lets the two endpoints of an axis swap, since an axis has no natural direction. (A first version with plain heatmap MSE collapsed to all-zero maps; the coordinate loss fixed it.)
+
+| Metric (151 test images) | Value |
+|---|---|
+| Mean radial error | 4.28 mm (95% CI 3.49 to 5.30) |
+| Landmarks within 2 mm / 4 mm | 40.1% / 69.2% |
+| BPD length error | **1.61 mm** |
+| OFD length error | 2.31 mm |
+
+Clinically the lengths matter most, and those are accurate; most point error comes from near-circular heads, where the direction of the major and minor axes is ill-defined (bottom-left below). Green = reference, red = prediction. Validation error was still falling at epoch 12, so a longer run should improve it.
+
+![landmark examples](docs/landmark_examples.png)
+
+**HC18 leaderboard submission**: [`docs/hc18_submission.csv`](docs/hc18_submission.csv) holds ellipse predictions for all 335 official test images (256 px U-Net + flip TTA, probability maps resized back to original resolution before the ellipse fit). The test labels are hidden, so the score only comes from uploading it at [hc18.grand-challenge.org](https://hc18.grand-challenge.org).
 
 **Real-time inference** (ONNX Runtime, CPU, batch 1)
 
@@ -83,6 +122,9 @@ python -m fetalscan.train_seg --data data/HC18 --out runs/seg
 python -m fetalscan.tune --data data/FETAL_PLANES_ZENODO --trials 10      # optional Optuna search
 python -m fetalscan.explain --ckpt runs/cls/best.pt --images some_image.png
 python -m fetalscan.export --cls runs/cls/best.pt --seg runs/seg/best.pt --out exports
+python -m fetalscan.train_landmarks --data data/HC18 --init-seg runs/seg/best.pt --out runs/landmarks
+python -m fetalscan.eval_seg --data data/HC18 --ckpt runs/seg/best.pt --out runs/seg/eval.json      # with/without TTA
+python -m fetalscan.hc18_submit --data data/HC18 --ckpt runs/seg/best.pt --tta --out hc18_submission.csv
 
 # serve
 FETALSCAN_CLS=exports/classifier.onnx FETALSCAN_SEG=exports/segmenter.onnx uvicorn app.serve:app
@@ -99,8 +141,9 @@ The suite covers ellipse math, mask filling, preprocessing, metrics, model shape
 
 ## Layout
 ```
-fetalscan/   preprocess.py  datasets.py  models.py  biometry.py  metrics.py  gradcam.py
-             train_cls.py   train_seg.py tune.py    explain.py   export.py   inference.py
+fetalscan/   preprocess.py  datasets.py  models.py  biometry.py  metrics.py  gradcam.py  landmarks.py
+             train_cls.py   train_seg.py train_landmarks.py  tune.py  eval_seg.py  explain.py  export.py
+             hc18_submit.py inference.py
 app/         serve.py (FastAPI)   streamlit_app.py
 scripts/     download_data.sh   make_synthetic.py
 tests/       unit + end-to-end tests

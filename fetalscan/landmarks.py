@@ -2,7 +2,7 @@
 
 HC18 ships ellipse annotations, not point labels, so the 4 landmarks are derived from each annotated
 ellipse: the 2 endpoints of the minor axis (BPD-style biparietal points) and the 2 endpoints of the major
-axis (OFD-style occipitofrontal points). A U-Net predicts one Gaussian heatmap per landmark.
+axis (OFD-style occipitofrontal points). A U-Net predicts one heatmap per landmark; soft-argmax turns each into sub-pixel coordinates.
 """
 from __future__ import annotations
 
@@ -61,8 +61,43 @@ def decode_heatmaps(hm: np.ndarray, window: int = 2) -> np.ndarray:
 
 
 def heatmap_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    """MSE weighted toward the peaks so the sparse targets don't collapse to all-zero predictions."""
+    """MSE weighted toward the peaks (kept as an auxiliary term)."""
     return (((pred - target) ** 2) * (1 + 10 * target)).mean()
+
+
+def soft_argmax(logits: torch.Tensor) -> torch.Tensor:
+    """Differentiable landmark coordinates: spatial softmax per channel, then expected (x, y). Bx K x2."""
+    b, k, h, w = logits.shape
+    prob = torch.softmax(logits.flatten(2), dim=-1).view(b, k, h, w)
+    xs = torch.arange(w, device=logits.device, dtype=logits.dtype)
+    ys = torch.arange(h, device=logits.device, dtype=logits.dtype)
+    return torch.stack([(prob.sum(2) * xs).sum(-1), (prob.sum(3) * ys).sum(-1)], dim=-1)
+
+
+def pair_invariant_l1(pred: torch.Tensor, gt: torch.Tensor) -> torch.Tensor:
+    """Per-image L1 where the two endpoints of each axis may be swapped (an axis has no natural direction).
+
+    Without this, near-vertical axes flip their canonical order between images and the model learns to
+    predict the midpoint. pred, gt: B x 4 x 2 (BPD_1, BPD_2, OFD_1, OFD_2). Returns B x 4 point errors.
+    """
+    out = []
+    for i in (0, 2):
+        p, g = pred[:, i:i + 2], gt[:, i:i + 2]
+        keep = (p - g).abs().sum(-1)
+        swap = (p - g.flip(1)).abs().sum(-1)
+        out.append(torch.where((keep.sum(1) <= swap.sum(1))[:, None], keep, swap))
+    return torch.cat(out, dim=1)
+
+
+def match_pairs(pred: np.ndarray, gt: np.ndarray) -> np.ndarray:
+    """Reorder pred endpoints within each axis to best match gt (used for evaluation)."""
+    pred = pred.copy()
+    for i in (0, 2):
+        keep = np.linalg.norm(pred[i:i + 2] - gt[i:i + 2], axis=1).sum()
+        swap = np.linalg.norm(pred[i:i + 2][::-1] - gt[i:i + 2], axis=1).sum()
+        if swap < keep:
+            pred[i:i + 2] = pred[i:i + 2][::-1].copy()
+    return pred
 
 
 class HC18LandmarkDataset(Dataset):
@@ -92,4 +127,4 @@ class HC18LandmarkDataset(Dataset):
 
 
 __all__ = ["LANDMARKS", "HC18Dataset", "HC18LandmarkDataset", "decode_heatmaps", "ellipse_landmarks",
-           "gaussian_heatmaps", "heatmap_loss"]
+           "gaussian_heatmaps", "heatmap_loss", "match_pairs", "pair_invariant_l1", "soft_argmax"]
